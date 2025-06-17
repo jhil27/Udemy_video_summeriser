@@ -1,4 +1,4 @@
-<video src='C:/Users/shreyasis/Downloads/udemy_transcript_summeriser.mp4' width=180/>
+https://github.com/user-attachments/assets/fc477582-6105-45a6-b9f2-60dce7fbb2c3
 ```markdown
 # 🧠 Udemy Transcript Summarizer Extension
 
