@@ -78,32 +78,100 @@ async function summarizeTranscript(transcript) {
 
     return { title, summary };
 }
-function drawMarkdownText(doc, markdown, x = 15, y = 20, lineHeight = 8, maxWidth = 180) {
-    const lines = markdown.split('\n');
+
+function sanitizeFilename(filename) {
+    return filename.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+}
+function tokenizeMarkdown(line) {
+    const regex = /(\*\*(.*?)\*\*|_(.*?)_)/g;
+    let tokens = [];
+    let lastIndex = 0;
+    let match;
+
+    while ((match = regex.exec(line)) !== null) {
+        if (match.index > lastIndex) {
+            // Push plain text before the match
+            tokens.push({
+                text: line.substring(lastIndex, match.index),
+                bold: false,
+                italic: false
+            });
+        }
+
+        if (match[1].startsWith('**')) {
+            tokens.push({
+                text: match[2],
+                bold: true,
+                italic: false
+            });
+        } else if (match[1].startsWith('_')) {
+            tokens.push({
+                text: match[3],
+                bold: false,
+                italic: true
+            });
+        }
+
+        lastIndex = regex.lastIndex;
+    }
+
+    if (lastIndex < line.length) {
+        // Remaining plain text after the last match
+        tokens.push({
+            text: line.substring(lastIndex),
+            bold: false,
+            italic: false
+        });
+    }
+
+    return tokens;
+}
+
+// Function to tokenize Markdown text for jsPDF rendering
+function downloadAsPdfFile(markdownSummary, title = "Transcript Summary") {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    const margin = 15;
+    const lineHeight = 8;
+    const maxWidth = doc.internal.pageSize.getWidth() - margin * 2;
+    const pageHeight = doc.internal.pageSize.getHeight();
+    let y = 20;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text(title, margin, y);
+    y += 10;
+
+    const lines = markdownSummary.split('\n');
     let insideCodeBlock = false;
     let codeBuffer = [];
 
+    const addPageIfNeeded = () => {
+        if (y > pageHeight - margin) {
+            doc.addPage();
+            y = margin;
+        }
+    };
+
     for (let line of lines) {
+        // Handle code blocks
         if (line.trim().startsWith('```')) {
-            // Toggle code block state
             if (!insideCodeBlock) {
                 insideCodeBlock = true;
                 codeBuffer = [];
             } else {
-                // End of code block — render it
-                doc.setFont("courier", "normal");
-                doc.setFontSize(11);
-                const codeText = codeBuffer.join('\n');
-                const codeLines = doc.splitTextToSize(codeText, maxWidth - 10);
+                insideCodeBlock = false;
 
-                codeLines.forEach((codeLine) => {
-                    doc.text(codeLine, x + 5, y);
+                // Render code block
+                doc.setFont("courier", "normal");
+                doc.setFontSize(10);
+                const codeLines = doc.splitTextToSize(codeBuffer.join('\n'), maxWidth - 10);
+                codeLines.forEach(codeLine => {
+                    addPageIfNeeded();
+                    doc.text(codeLine, margin + 5, y);
                     y += lineHeight;
                 });
-
-                insideCodeBlock = false;
-                codeBuffer = [];
-                y += lineHeight / 2;
+                y += 4; // extra space after code
             }
             continue;
         }
@@ -113,87 +181,38 @@ function drawMarkdownText(doc, markdown, x = 15, y = 20, lineHeight = 8, maxWidt
             continue;
         }
 
-        // Handle bullet points
+        // Convert bullet points
         let isBullet = false;
         if (/^\s*[-*+]\s+/.test(line)) {
             isBullet = true;
             line = line.replace(/^\s*[-*+]\s+/, '• ');
         }
 
+        // Parse for bold/italic
         const tokens = tokenizeMarkdown(line);
-        let currentX = x + (isBullet ? 5 : 0);
+        let currentX = margin + (isBullet ? 5 : 0);
 
         for (const token of tokens) {
             const { text, bold, italic } = token;
-
             doc.setFont("times", bold ? "bold" : "normal");
             doc.setFontSize(italic ? 11 : 12);
 
-            const splitLines = doc.splitTextToSize(text, maxWidth - (currentX - x));
-
+            const splitLines = doc.splitTextToSize(text, maxWidth - (currentX - margin));
             for (let i = 0; i < splitLines.length; i++) {
+                addPageIfNeeded();
                 doc.text(splitLines[i], currentX, y);
                 y += i < splitLines.length - 1 ? lineHeight : 0;
-                currentX = x; // reset X after wrapped lines
+                currentX = margin;
             }
-
-            currentX += doc.getTextWidth(splitLines[splitLines.length - 1]);
+            currentX += doc.getTextWidth(splitLines[splitLines.length - 1] || '');
         }
 
         y += lineHeight;
     }
 
-    return y;
-}
-function tokenizeMarkdown(line) {
-    const regex = /(\*\*(.*?)\*\*|_(.*?)_)/g;
-    let result;
-    let lastIndex = 0;
-    const tokens = [];
-
-    while ((result = regex.exec(line)) !== null) {
-        if (result.index > lastIndex) {
-            tokens.push({ text: line.substring(lastIndex, result.index), bold: false, italic: false });
-        }
-
-        if (result[1].startsWith('**')) {
-            tokens.push({ text: result[2], bold: true, italic: false });
-        } else if (result[1].startsWith('_')) {
-            tokens.push({ text: result[3], bold: false, italic: true });
-        }
-
-        lastIndex = regex.lastIndex;
-    }
-
-    if (lastIndex < line.length) {
-        tokens.push({ text: line.substring(lastIndex), bold: false, italic: false });
-    }
-
-    return tokens;
-}
-function sanitizeFilename(name) {
-    return name.replace(/[\\/:*?"<>|]/g, "");
-}
-function downloadAsPdfFile(markdownSummary, title = "Transcript Summary") {
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF();
-    const margin = 15;
-    let y = 20;
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text(title, margin, y);
-    y += 10;
-
-    doc.setFont("times", "normal");
-    doc.setFontSize(12);
-
-    y = drawMarkdownText(doc, markdownSummary, margin, y);
-
     const filename = sanitizeFilename(title) + ".pdf";
     doc.save(filename);
 }
-
 
 
 async function run() {
